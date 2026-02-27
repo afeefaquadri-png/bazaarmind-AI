@@ -16,55 +16,55 @@
 
 ## 📁 Project Structure
 
+```text
 bazaarmind/
 ├── backend/
-│ ├── main.py
-│ ├── requirements.txt
-│ ├── Dockerfile
-│ ├── .env.example
-│ ├── database/
-│ │ └── connection.py
-│ ├── models/
-│ │ └── schemas.py
-│ ├── routes/
-│ │ ├── shops.py
-│ │ ├── products.py
-│ │ ├── orders.py
-│ │ ├── whatsapp.py
-│ │ └── analytics.py
-│ ├── services/
-│ │ └── ai_parser.py
-│ └── templates/
-│ └── shop_templates.py
+│   ├── main.py
+│   ├── requirements.txt
+│   ├── Dockerfile
+│   ├── .env.example
+│   ├── database/
+│   │   └── connection.py
+│   ├── models/
+│   │   └── schemas.py
+│   ├── routes/
+│   │   ├── shops.py
+│   │   ├── products.py
+│   │   ├── orders.py
+│   │   ├── whatsapp.py
+│   │   └── analytics.py
+│   ├── services/
+│   │   └── ai_parser.py
+│   └── templates/
+│       └── shop_templates.py
 │
 ├── frontend/
-│ ├── src/
-│ │ ├── App.jsx
-│ │ ├── main.jsx
-│ │ ├── index.css
-│ │ ├── components/
-│ │ │ ├── Layout.jsx
-│ │ │ ├── Modal.jsx
-│ │ │ └── DynamicProductForm.jsx
-│ │ ├── hooks/
-│ │ │ └── useShop.jsx
-│ │ ├── pages/
-│ │ │ ├── Dashboard.jsx
-│ │ │ ├── Products.jsx
-│ │ │ ├── Orders.jsx
-│ │ │ ├── Shops.jsx
-│ │ │ └── WhatsApp.jsx
-│ │ └── services/
-│ │ └── api.js
-│ ├── package.json
-│ ├── vite.config.js
-│ ├── tailwind.config.js
-│ └── Dockerfile
+│   ├── src/
+│   │   ├── App.jsx
+│   │   ├── main.jsx
+│   │   ├── index.css
+│   │   ├── components/
+│   │   │   ├── Layout.jsx
+│   │   │   ├── Modal.jsx
+│   │   │   └── DynamicProductForm.jsx
+│   │   ├── hooks/
+│   │   │   └── useShop.jsx
+│   │   ├── pages/
+│   │   │   ├── Dashboard.jsx
+│   │   │   ├── Products.jsx
+│   │   │   ├── Orders.jsx
+│   │   │   ├── Shops.jsx
+│   │   │   └── WhatsApp.jsx
+│   │   └── services/
+│   │       └── api.js
+│   ├── package.json
+│   ├── vite.config.js
+│   ├── tailwind.config.js
+│   └── Dockerfile
 │
 ├── docker-compose.yml
 ├── start.sh
 └── README.md
-
 ---
 
 
