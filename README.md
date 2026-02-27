@@ -1,83 +1,97 @@
-# BazaarMind AI — Production-Ready MVP
+# 🚀 BazaarMind AI — Production-Ready MVP
 
 > AI-powered Business Operating System for Indian Small Retail
 
 ---
 
+## ✨ Key Highlights
+
+- ⚡ Dynamic multi-shop system (no schema changes required)
+- 🤖 AI-powered WhatsApp order automation (Google Gemini)
+- 📊 Real-time analytics dashboard
+- 🧩 Config-driven architecture (plug-and-play shop types)
+- 🔁 Rule-based + LLM hybrid parsing system
+
+---
+
 ## 📁 Project Structure
 
-```
 bazaarmind/
 ├── backend/
-│   ├── main.py                    # FastAPI app entry point
-│   ├── requirements.txt
-│   ├── Dockerfile
-│   ├── .env.example
-│   ├── database/
-│   │   └── connection.py          # MongoDB async connection + indexes
-│   ├── models/
-│   │   └── schemas.py             # All Pydantic models
-│   ├── routes/
-│   │   ├── shops.py               # Shop CRUD + type listing
-│   │   ├── products.py            # Product CRUD with dynamic attrs
-│   │   ├── orders.py              # Order creation + stock deduction
-│   │   ├── whatsapp.py            # Webhook + simulator + send
-│   │   └── analytics.py          # Dashboard stats + chart data
-│   ├── services/
-│   │   └── ai_parser.py          # Rule-based + LLM order parsing
-│   └── templates/
-│       └── shop_templates.py     # 20+ shop type configs (THE CORE)
+│ ├── main.py
+│ ├── requirements.txt
+│ ├── Dockerfile
+│ ├── .env.example
+│ ├── database/
+│ │ └── connection.py
+│ ├── models/
+│ │ └── schemas.py
+│ ├── routes/
+│ │ ├── shops.py
+│ │ ├── products.py
+│ │ ├── orders.py
+│ │ ├── whatsapp.py
+│ │ └── analytics.py
+│ ├── services/
+│ │ └── ai_parser.py
+│ └── templates/
+│ └── shop_templates.py
 │
 ├── frontend/
-│   ├── src/
-│   │   ├── App.jsx                # Router
-│   │   ├── main.jsx               # Entry point
-│   │   ├── index.css              # Tailwind + custom styles
-│   │   ├── components/
-│   │   │   ├── Layout.jsx         # Sidebar + shop switcher
-│   │   │   ├── Modal.jsx          # Reusable modal
-│   │   │   └── DynamicProductForm.jsx  # ⭐ Dynamic form engine
-│   │   ├── hooks/
-│   │   │   └── useShop.jsx        # Global shop context
-│   │   ├── pages/
-│   │   │   ├── Dashboard.jsx      # Stats + charts
-│   │   │   ├── Products.jsx       # Product management
-│   │   │   ├── Orders.jsx         # Order management
-│   │   │   ├── Shops.jsx          # Shop creation + selection
-│   │   │   └── WhatsApp.jsx       # Bot simulator
-│   │   └── services/
-│   │       └── api.js             # All API calls (clean layer)
-│   ├── package.json
-│   ├── vite.config.js
-│   ├── tailwind.config.js
-│   └── Dockerfile
+│ ├── src/
+│ │ ├── App.jsx
+│ │ ├── main.jsx
+│ │ ├── index.css
+│ │ ├── components/
+│ │ │ ├── Layout.jsx
+│ │ │ ├── Modal.jsx
+│ │ │ └── DynamicProductForm.jsx
+│ │ ├── hooks/
+│ │ │ └── useShop.jsx
+│ │ ├── pages/
+│ │ │ ├── Dashboard.jsx
+│ │ │ ├── Products.jsx
+│ │ │ ├── Orders.jsx
+│ │ │ ├── Shops.jsx
+│ │ │ └── WhatsApp.jsx
+│ │ └── services/
+│ │ └── api.js
+│ ├── package.json
+│ ├── vite.config.js
+│ ├── tailwind.config.js
+│ └── Dockerfile
 │
 ├── docker-compose.yml
 ├── start.sh
 └── README.md
-```
 
 ---
 
-## ⚡ Quick Start (Local Dev)
+
+---
+
+## ⚡ Quick Start (Local Development)
 
 ### Prerequisites
 - Python 3.11+
 - Node.js 18+
 - MongoDB running locally
 
+---
+
 ### Option 1: One-command start
+
 ```bash
 chmod +x start.sh
 ./start.sh
-```
 
-### Option 2: Manual
+### Option 1: One-command start
+
 
 **Backend:**
 ```bash
 cd backend
-cp .env.example .env       # Edit with your keys
+cp .env.example .env
 pip install -r requirements.txt
 uvicorn main:app --reload --port 8000
 ```
@@ -160,13 +174,13 @@ No hardcoded UI per shop type.
 ```
 "2 milk 1 bread"
        ↓
-Rule-based regex parser (fast, no API cost)
-       ↓ (if fails)
-LLM parser (OpenAI/Claude)
+Rule-based parser
        ↓
-Fuzzy product matching against shop inventory
+Google Gemini LLM
        ↓
-{ items: [{name, qty, product_id, unit_price, confidence}] }
+Fuzzy matching
+       ↓
+Structured order JSON
 ```
 
 ---
@@ -242,18 +256,10 @@ Use the built-in simulator at http://localhost:3000/whatsapp
 
 ## 🤖 AI Integration
 
-### With OpenAI:
+### With Gemini:
 ```env
-OPENAI_API_KEY=sk-...
+GEMINI_API_KEY=your_api_key
 ```
-
-### With Anthropic Claude:
-```env
-ANTHROPIC_API_KEY=sk-ant-...
-```
-
-The parser auto-detects which key is available. If neither, it uses rule-based parsing only (works well for standard orders).
-
 ---
 
 ## 🛒 Supported Shop Types (20+)
@@ -286,8 +292,7 @@ TWILIO_AUTH_TOKEN=...
 TWILIO_WHATSAPP_NUMBER=whatsapp:+14155238886
 
 # AI parsing (optional, rule-based works without)
-OPENAI_API_KEY=sk-...
-ANTHROPIC_API_KEY=sk-ant-...
+Gemini api-key= sk-*****
 ```
 
 ---
