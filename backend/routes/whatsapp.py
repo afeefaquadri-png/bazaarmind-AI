@@ -1,12 +1,11 @@
-from fastapi import APIRouter, Request, HTTPException, Query
+from fastapi import APIRouter, Request, Query
 from database.connection import get_db
 from models.schemas import WhatsAppMessage
-from services.ai_parser import parse_order
+from services.ai_parser import parse_order, generate_chat_reply
 from bson import ObjectId
 from datetime import datetime
 import os
 import httpx
-import google.generativeai as genai  # ✅ Gemini
 
 router = APIRouter()
 
@@ -14,30 +13,23 @@ TWILIO_SID = os.getenv("TWILIO_ACCOUNT_SID", "")
 TWILIO_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "")
 TWILIO_WHATSAPP = os.getenv("TWILIO_WHATSAPP_NUMBER", "whatsapp:+14155238886")
 
-# ✅ Gemini initialization
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
-    gemini_model = genai.GenerativeModel("gemini-1.5-flash-latest")
-else:
-    gemini_model = None
-
-
+# ✅ Send WhatsApp Message
 async def send_whatsapp_reply(to: str, message: str):
     if not TWILIO_SID or not TWILIO_TOKEN:
         print(f"[WHATSAPP MOCK] To: {to}\nMessage: {message}")
         return {"status": "mock_sent"}
-    
+
     url = f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_SID}/Messages.json"
+
     data = {
         "From": TWILIO_WHATSAPP,
         "To": f"whatsapp:{to}",
         "Body": message,
     }
 
-    async with httpx.AsyncClient() as client_http:
-        response = await client_http.post(
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
             url,
             data=data,
             auth=(TWILIO_SID, TWILIO_TOKEN)
@@ -46,35 +38,44 @@ async def send_whatsapp_reply(to: str, message: str):
     return response.json()
 
 
-def build_confirmation_message(parsed: dict, shop_name: str) -> str:
-    if not parsed["items"]:
-        return f"Hi! We couldn't understand your order. Please try:\n'2 milk 1 bread'\n\nShop: {shop_name}"
+# 🧾 BILL BUILDER — always included when there are matched items
+def build_bill_message(shop_name: str, items: list, total: float) -> str:
+    if not items:
+        return ""
 
-    lines = [f"🛒 *{shop_name}* — Order Summary\n"]
-    total = 0.0
-    missing = []
+    lines = [f"🧾 *{shop_name} — Bill*\n"]
 
-    for item in parsed["items"]:
-        if item["matched_product_id"]:
-            price = item["unit_price"] * item["quantity"]
-            total += price
-            lines.append(f"✅ {item['quantity']}x {item['matched_product_name']} — Rs.{price:.0f}")
-        else:
-            missing.append(item["name"])
-            lines.append(f"❓ {item['quantity']}x {item['name']} — *not found*")
+    for i, item in enumerate(items, start=1):
+        name = item['product_name']
+        qty = item['quantity']
+        subtotal = item['total']
+        lines.append(f"{i}. {name} x{qty}  →  ₹{subtotal:.0f}")
 
-    lines.append(f"\n💰 *Total: Rs.{total:.2f}*")
-
-    if missing:
-        lines.append(f"\n⚠️ Items not found: {', '.join(missing)}")
-        lines.append("Please check spelling or ask the shopkeeper.")
-
-    if all(i["matched_product_id"] for i in parsed["items"]):
-        lines.append("\n✅ Reply *CONFIRM* to place your order")
-    else:
-        lines.append("\nReply *CONFIRM* to place available items only")
+    lines.append("\n─────────────────────")
+    lines.append(f"💰 *Total:  ₹{total:.0f}*")
+    lines.append("─────────────────────")
+    lines.append("\nReply *CONFIRM* to place your order ✅")
 
     return "\n".join(lines)
+
+
+# ✅ Shared confirm detection — English + Hindi + Hinglish
+def is_confirm_message(text: str) -> bool:
+    clean = text.lower().strip()
+    # Exact match words
+    confirm_words = {
+        "confirm", "yes", "ok", "okay", "sure", "yep", "yup",
+        "haan", "ha", "han", "haa", "done", "y",
+        "bilkul", "zaroor",
+    }
+    if clean in confirm_words:
+        return True
+    # Partial match phrases
+    confirm_phrases = [
+        "confirm", "place order", "kar do", "order karo",
+        "ho jaye", "send it", "go ahead", "proceed",
+    ]
+    return any(phrase in clean for phrase in confirm_phrases)
 
 
 @router.post("/webhook")
@@ -89,7 +90,7 @@ async def whatsapp_webhook(request: Request):
     if not body:
         return {"status": "empty_message"}
 
-    # ✅ Log message
+    # 🧾 Store incoming message
     await db.whatsapp_messages.insert_one({
         "from": from_number,
         "to": to_number,
@@ -98,7 +99,7 @@ async def whatsapp_webhook(request: Request):
         "timestamp": datetime.utcnow(),
     })
 
-    # ✅ Find shop
+    # 🏪 Find shop
     shop = await db.shops.find_one({"whatsapp_number": to_number})
     if not shop:
         shop = await db.shops.find_one({"phone": to_number})
@@ -110,20 +111,27 @@ async def whatsapp_webhook(request: Request):
     shop_id = str(shop["_id"])
     shop_name = shop["name"]
 
-    # 🔥 SMART CONFIRM (FIXED + IMPROVED)
-    confirm_words = ["confirm", "yes", "ok", "okay", "haan", "ha", "han", "kar do", "place order", "done"]
+    print(f"[WEBHOOK] From: {from_number} | Message: '{body}' | Is confirm: {is_confirm_message(body)}")
 
-    if any(word in body.lower() for word in confirm_words):
-        session = await db.whatsapp_sessions.find_one({
-            "customer_phone": from_number,
-            "shop_id": shop_id,
-            "status": "pending"
-        }, sort=[("created_at", -1)])
+    # ✅ CONFIRM FLOW
+    if is_confirm_message(body):
+        session = await db.whatsapp_sessions.find_one(
+            {
+                "customer_phone": from_number,
+                "shop_id": shop_id,
+                "status": "pending"
+            },
+            sort=[("created_at", -1)]
+        )
 
         if not session:
-            await send_whatsapp_reply(from_number, "No pending order found. Send your order first!")
+            await send_whatsapp_reply(
+                from_number,
+                "No pending order found. Please send your order first! 😊"
+            )
             return {"status": "no_pending_order"}
 
+        # 🧾 Create order in DB
         order_doc = {
             "shop_id": shop_id,
             "customer_phone": from_number,
@@ -135,10 +143,9 @@ async def whatsapp_webhook(request: Request):
             "notes": f"Original message: {session['raw_message']}",
             "created_at": datetime.utcnow(),
         }
-
         await db.orders.insert_one(order_doc)
 
-        # Update stock
+        # 📦 Update stock
         for item in session["confirmed_items"]:
             if item.get("product_id"):
                 await db.products.update_one(
@@ -149,37 +156,21 @@ async def whatsapp_webhook(request: Request):
                     }
                 )
 
+        # 🔄 Mark session complete
         await db.whatsapp_sessions.update_one(
             {"_id": session["_id"]},
             {"$set": {"status": "completed"}}
         )
 
-        reply = f"🎉 *Order Confirmed!*\nThank you! Your order of Rs.{session['total']:.2f} has been placed.\n\nShop: {shop_name}"
+        reply = (
+            f"🎉 *Order Confirmed!*\n"
+            f"Thank you! Your order of ₹{session['total']:.0f} has been placed.\n"
+            f"Shop: {shop_name} 😊"
+        )
         await send_whatsapp_reply(from_number, reply)
-
         return {"status": "order_created"}
 
-    # 🤖 Gemini AI reply
-    ai_reply = None
-    if gemini_model:
-        try:
-            prompt = f"""
-You are a smart shop assistant in India.
-
-Understand Hindi, Hinglish, and English.
-
-Customer message:
-{body}
-
-If it's an order → understand items.
-If it's casual → reply naturally.
-"""
-            response = gemini_model.generate_content(prompt)
-            ai_reply = response.text.strip() if response.text else None
-        except Exception as e:
-            print("Gemini AI error:", e)
-
-    # ✅ Parse order
+    # 🤖 PARSE ORDER
     parsed = await parse_order(body, shop_id)
 
     confirmed_items = []
@@ -197,12 +188,13 @@ If it's casual → reply naturally.
                 "total": amt,
             })
 
-    # ✅ Store session
+    # 🔄 Reset previous sessions for this customer+shop
     await db.whatsapp_sessions.delete_many({
         "customer_phone": from_number,
         "shop_id": shop_id
     })
 
+    # 💾 Save new pending session
     await db.whatsapp_sessions.insert_one({
         "customer_phone": from_number,
         "shop_id": shop_id,
@@ -214,71 +206,95 @@ If it's casual → reply naturally.
         "created_at": datetime.utcnow(),
     })
 
-    # ✅ Reply
-    reply = build_confirmation_message(parsed, shop_name)
-
-    if not parsed["items"] and ai_reply:
-        reply = ai_reply
+    # 🤖 Build reply = AI chat message + bill
+    if confirmed_items:
+        ai_text = await generate_chat_reply(body, {
+            "items": confirmed_items,
+            "total": total,
+            "shop_name": shop_name,
+        })
+        bill = build_bill_message(shop_name, confirmed_items, total)
+        # Always send both: friendly message + bill
+        reply = f"{ai_text}\n\n{bill}"
+    elif parsed["items"]:
+        # Items were understood but none exist in this shop's catalog
+        unmatched = ", ".join(i["name"] for i in parsed["items"])
+        reply = (
+            f"Sorry, '{unmatched}' is not available in our shop right now. "
+            f"Please check our available items or try something else! 😊"
+        )
+    else:
+        reply = await generate_chat_reply(body, {
+            "items": [],
+            "total": 0,
+            "shop_name": shop_name,
+        })
 
     await send_whatsapp_reply(from_number, reply)
-
     return {"status": "awaiting_confirmation", "parsed": parsed}
 
 
+# ✅ Manual send
 @router.post("/send")
 async def send_message(msg: WhatsAppMessage):
     result = await send_whatsapp_reply(msg.customer_phone, msg.message)
     return {"status": "sent", "result": result}
 
 
+# ✅ Parse API
 @router.post("/parse-order")
 async def parse_order_api(shop_id: str = Query(...), message: str = Query(...)):
     parsed = await parse_order(message, shop_id)
     return parsed
 
 
+# ✅ Simulate — full flow: parse → session save → confirm → order create
 @router.post("/simulate")
 async def simulate_whatsapp(body: WhatsAppMessage):
     db = get_db()
 
     shop = await db.shops.find_one({"_id": ObjectId(body.shop_id)})
     shop_name = shop["name"] if shop else "Test Shop"
+    shop_id = body.shop_id
 
-   # 🔥 CONFIRM LOGIC
-    confirm_words = ["confirm", "yes", "ok", "okay", "haan", "ha", "han", "kar do", "place order", "done"]
+    # Stable simulator identity per shop
+    sim_phone = f"simulator_{shop_id}"
 
-    if any(word in body.message.lower() for word in confirm_words):
-        session = await db.whatsapp_sessions.find_one({
-            "customer_phone": body.customer_phone,
-            "shop_id": body.shop_id,
-            "status": "pending"
-        }, sort=[("created_at", -1)])
+    print(f"[SIMULATE] Message: '{body.message}' | Is confirm: {is_confirm_message(body.message)}")
 
-        print("SESSION:", session)
+    # ✅ CONFIRM FLOW
+    if is_confirm_message(body.message):
+        session = await db.whatsapp_sessions.find_one(
+            {
+                "customer_phone": sim_phone,
+                "shop_id": shop_id,
+                "status": "pending"
+            },
+            sort=[("created_at", -1)]
+        )
 
-        if not session or not session.get("confirmed_items"):
+        if not session:
             return {
-                "reply_preview": "No valid items to order.",
-                "status": "no_items"
-           }
+                "reply_preview": "No pending order found. Please send your order first! 😊",
+                "status": "no_pending_order",
+                "parsed": None,
+            }
 
-        # ✅ CREATE ORDER (THIS WAS MISSING)
+        # 🧾 Create order
         order_doc = {
-            "shop_id": body.shop_id,
-            "customer_phone": body.customer_phone,
-            "customer_name": "WA Customer",
+            "shop_id": shop_id,
+            "customer_phone": sim_phone,
+            "customer_name": "Simulator Customer",
             "items": session["confirmed_items"],
             "total_amount": session["total"],
             "status": "confirmed",
-            "channel": "whatsapp",
+            "channel": "simulator",
             "notes": f"Original message: {session['raw_message']}",
             "created_at": datetime.utcnow(),
-       }
+        }
+        await db.orders.insert_one(order_doc)
 
-        result = await db.orders.insert_one(order_doc)
-
-        print("ORDER CREATED:", result.inserted_id)
-        # ✅ STOCK UPDATE
+        # 📦 Update stock
         for item in session["confirmed_items"]:
             if item.get("product_id"):
                 await db.products.update_one(
@@ -286,21 +302,31 @@ async def simulate_whatsapp(body: WhatsAppMessage):
                     {
                         "$inc": {"stock": -item["quantity"]},
                         "$set": {"updated_at": datetime.utcnow()}
-                   }
-            )
-        # ✅ UPDATE SESSION
+                    }
+                )
+
+        # 🔄 Mark complete
         await db.whatsapp_sessions.update_one(
             {"_id": session["_id"]},
             {"$set": {"status": "completed"}}
         )
 
-        return {
-            "reply_preview": f"🎉 Order Confirmed! Total: Rs.{session['total']:.2f}",
-            "status": "order_created"
-       }
+        reply = (
+            f"🎉 *Order Confirmed!*\n"
+            f"Thank you! Your order of ₹{session['total']:.0f} has been placed.\n"
+            f"Shop: {shop_name} 😊"
+        )
 
-    # ✅ Parse
-    parsed = await parse_order(body.message, body.shop_id)
+        return {
+            "reply_preview": reply,
+            "status": "order_created",
+            "parsed": None,
+            "order_total": session["total"],
+            "confirmed_items": session["confirmed_items"],
+        }
+
+    # 🤖 PARSE ORDER
+    parsed = await parse_order(body.message, shop_id)
 
     confirmed_items = []
     total = 0.0
@@ -317,15 +343,16 @@ async def simulate_whatsapp(body: WhatsAppMessage):
                 "total": amt,
             })
 
-    # 🔥 SAVE SESSION (this was missing)
+    # 🔄 Reset old simulator session
     await db.whatsapp_sessions.delete_many({
-        "customer_phone": body.customer_phone,
-        "shop_id": body.shop_id
+        "customer_phone": sim_phone,
+        "shop_id": shop_id
     })
 
+    # 💾 Save session so CONFIRM works on next message
     await db.whatsapp_sessions.insert_one({
-        "customer_phone": body.customer_phone,
-        "shop_id": body.shop_id,
+        "customer_phone": sim_phone,
+        "shop_id": shop_id,
         "raw_message": body.message,
         "parsed_items": parsed["items"],
         "confirmed_items": confirmed_items,
@@ -334,10 +361,33 @@ async def simulate_whatsapp(body: WhatsAppMessage):
         "created_at": datetime.utcnow(),
     })
 
-    reply = build_confirmation_message(parsed, shop_name)
+    # 🤖 Build reply
+    if confirmed_items:
+        ai_text = await generate_chat_reply(body.message, {
+            "items": confirmed_items,
+            "total": total,
+            "shop_name": shop_name,
+        })
+        bill = build_bill_message(shop_name, confirmed_items, total)
+        reply = f"{ai_text}\n\n{bill}"
+    elif parsed["items"]:
+        unmatched = ", ".join(i["name"] for i in parsed["items"])
+        reply = (
+            f"Sorry, '{unmatched}' is not available in our shop right now. "
+            f"Please check available items or try something else! 😊"
+        )
+    else:
+        reply = await generate_chat_reply(body.message, {
+            "items": [],
+            "total": 0,
+            "shop_name": shop_name,
+        })
 
     return {
         "parsed": parsed,
         "reply_preview": reply,
-        "status": "simulated",
+        "status": "awaiting_confirmation",
+        "confirmed_items": confirmed_items,
+        "total": total,
     }
+
